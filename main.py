@@ -4,8 +4,6 @@ from hashlib import sha1
 
 def base32_decode(s):
     base32_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
-    padding = '='
-    s = s.rstrip(padding)
     decoded = bytearray()
 
     # converting into bytes
@@ -17,20 +15,30 @@ def base32_decode(s):
         if bits >= 8:
             bits -= 8
             decoded.append((value >> bits) & 0xFF)
-
+    
     return bytes(decoded)
 
-# custom hmac_sha1 implementatino
-def hmac_sha1(key, message):
-    # block size of teh hash
-    block_size = 64
-    if len(key) > block_size:
-        key = sha1(key).digest()  # Hash the key if it's too long
-    key += b'\x00' * (block_size - len(key))  # Pad key with zeros
+def to_big_endian(counter):
+    counter_bytes = bytearray(8)
+    
+    for i in range(8):
+        # extracting the i-th byte from the back, shifted by (7 - i) * 8 bits
+        counter_bytes[i] = (counter >> (7 - i) * 8) & 0xFF
+    
+    return bytes(counter_bytes)
 
-    # paddings
-    o_key_pad = bytearray((b ^ 0x5C) for b in key)
-    i_key_pad = bytearray((b ^ 0x36) for b in key)
+
+# hmac_sha1 implementation
+def hmac_sha1(key, message):
+    # block size of the hash
+    block_size = 64
+    
+    # added zeros at the end to make the length of the block size 64
+    key += b'\x00' * (block_size - len(key))
+
+    # each byte 
+    o_key_pad = bytearray((b ^ 0x5C) for b in key) # 92 1011100
+    i_key_pad = bytearray((b ^ 0x36) for b in key) # 54 110110
 
     # inner hash
     inner_hash = sha1(i_key_pad + message).digest()
@@ -38,20 +46,22 @@ def hmac_sha1(key, message):
     # outer hash
     return sha1(o_key_pad + inner_hash).digest()
 
-# Generate TOTP function
 def generate_totp(secret_key, interval=30, digits=6):
-    # synchronized the current time as pico's time was ahead
-    current_time = int(time.time()) - 39600
-    print(current_time)
-    # get the counter
+    current_time = int(time.time())
+    # uncomment on pico / 39600 sec: 11 hours (pico time was on UTC +11)
+    # current_time -= 39600
+
+
+    # computing counter / (//) -> integer division
     counter = current_time // interval
     
     # Decode the Base32 secret key
     secret_key_bytes = base32_decode(secret_key)
 
     # 8-byte big-endian integer
-    counter_bytes = struct.pack(">Q", counter)
+    counter_bytes = to_big_endian(counter)
 
+    # secret_key_bytes: 10 bytes, counter_bytes: 8 bytes
     hmac_hash = hmac_sha1(secret_key_bytes, counter_bytes)
 
     # dynamic truncation
@@ -61,8 +71,13 @@ def generate_totp(secret_key, interval=30, digits=6):
     # get the last 6 digits
     totp = binary_code % (10 ** digits)
 
-    return str(totp)
+    # totp may have less than 6 digits, add 0's at the front to make it 6 digit number
+    totp_str = str(totp)
+    totp_str_6_digits = '0' * (6 - len(totp_str)) + totp_str
+
+    return str(totp_str_6_digits)
 
 
 secret_key = 'KMPB45IZDYHWYOLF' # sap@gmail.com
+# print('secret key len: ', len(secret_key)) 16 
 print("6 digit TOTP Code:", generate_totp(secret_key))
